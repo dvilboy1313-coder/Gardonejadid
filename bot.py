@@ -1,3 +1,4 @@
+import math
 import os
 import random
 import threading
@@ -11,244 +12,253 @@ TOKEN = os.environ.get('BOT_TOKEN', 'YOUR_FALLBACK_TOKEN')
 bot = telebot.TeleBot(TOKEN)
 app = Flask(__name__)
 
-# ذخیره‌ساز وضعیت گردونه‌ها در حافظه
-# ساختار: {wheel_id: {"options": [...], "slots": [...], "eliminated": [...], "scores": {...}}}
+# حافظه نگهداری گردونه‌ها
 WHEELS = {}
 
-# ایموجی‌های شماره‌دار برای ۱۰ خانه گردونه
-NUM_EMOJIS = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟']
-
-# دسته‌بندی‌های آماده وقتی کاربر چیزی تایپ نمی‌کند
-PRESET_CATEGORIES = [
-    {
-        'id': 'preset_food',
-        'title': '🍕 گردونه شام و غذا',
-        'desc': 'پیتزا، برگر، پاستا، سوخاری، کباب، ساندویچ',
-        'options': ['پیتزا', 'برگر', 'پاستا', 'سوخاری', 'کباب', 'ساندویچ'],
-    },
-    {
-        'id': 'preset_movie',
-        'title': '🎬 گردونه ژانر فیلم و انیمه',
-        'desc': 'اکشن، ترسناک، کمدی، علمی‌تخیلی، انیمه، معمایی',
-        'options': ['اکشن', 'ترسناک', 'کمدی', 'علمی‌تخیلی', 'انیمه', 'معمایی'],
-    },
-    {
-        'id': 'preset_date',
-        'title': '💑 گردونه کارهای دونفره',
-        'desc': 'فیلم دیدن، بازی کردن، موزیک گوش دادن، چت طولانی، کوییز',
-        'options': [
-            'فیلم دیدن',
-            'گیم زدن',
-            'موزیک و چت',
-            'صندلی داغ',
-            'پانتومیم/کوییز',
-        ],
-    },
-    {
-        'id': 'preset_yesno',
-        'title': '⚖️ گردونه تصمیم‌گیری (آره یا نه؟)',
-        'desc': '۱۰۰٪ آره، نه اصلاً، شاید، بنداز فردا، حتماً انجامش بده',
-        'options': [
-            '۱۰۰٪ آره',
-            'نه اصلاً',
-            'بنداز فردا',
-            'حتماً انجام بده',
-            'شانس دوباره',
-        ],
-    },
-]
+# پالت رنگ‌های گردونه (همگی دقیقاً هم‌عرض هستند تا دایره صاف بماند)
+COLORS = ['🟥', '🟦', '🟩', '🟨', '🟪', '🟧', '🟫', '⬛']
+BG_PIXEL = '⬜'
+CENTER_PIXEL = '🎡'
 
 
 @app.route('/')
 def index():
-  return '🎡 Ultimate Spin Wheel Bot is Running!', 200
+  return '🎨 Pixel Art Spin Wheel Bot is Live!', 200
 
 
-def fill_10_slots(options):
-  """توزیع متوازن گزینه‌ها در ۱۰ خانه دایره"""
-  slots = [options[i % len(options)] for i in range(10)]
-  return slots
+def render_pie_wheel(items, rotation_deg=0, pointer='🔻'):
+  """ساخت دایره پیکسلی کاملاً صاف و گرد که بر اساس وزن (شانس) هر گزینه
+
+  به نیم‌دایره، ۳ قاچ یا چند قاچ رنگی تقسیم می‌شود.
+  """
+  active_items = [item for item in items if item['weight'] > 0]
+  total_weight = sum(item['weight'] for item in active_items)
+
+  if total_weight == 0:
+    active_items = items
+    total_weight = len(items)
+
+  # محاسبه بازه زاویه‌ای هر گزینه از 0 تا 360 درجه
+  slices = []
+  current_angle = 0.0
+  for item in active_items:
+    w = item['weight'] if item['weight'] > 0 else 1
+    span = (w / total_weight) * 360.0
+    slices.append((current_angle, current_angle + span, item))
+    current_angle += span
+
+  # پیدا کردن گزینه‌ای که الان در نقطه 0 درجه (زیر عقربه 🔻) قرار دارد
+  top_angle = (0 - rotation_deg) % 360
+  current_top_item = active_items[0]
+  for start_a, end_a, item in slices:
+    if start_a <= top_angle <= end_a:
+      current_top_item = item
+      break
+
+  # رسم شبکه دایره (شعاع ۴ واحد = قطر ۹ بلوک هم‌اندازه)
+  radius = 4
+  rows = []
+
+  # ردیف عقربه بالای دایره
+  pointer_row = [BG_PIXEL] * (2 * radius + 1)
+  pointer_row[radius] = pointer
+  rows.append(''.join(pointer_row))
+
+  for y in range(-radius, radius + 1):
+    row_str = ''
+    for x in range(-radius, radius + 1):
+      dist = math.sqrt(x * x + y * y)
+      if x == 0 and y == 0:
+        row_str += CENTER_PIXEL
+      elif dist <= radius + 0.35:  # فرمول گرد شدن کامل لبه‌های دایره
+        # محاسبه زاویه هر پیکسل نسبت به مرکز (بالای دایره = 0 درجه، ساعت‌گرد)
+        angle = (math.degrees(math.atan2(x, -y)) + 360) % 360
+        shifted_angle = (angle - rotation_deg) % 360
+
+        pixel_color = active_items[-1]['color']
+        for start_a, end_a, item in slices:
+          if start_a <= shifted_angle <= end_a:
+            pixel_color = item['color']
+            break
+        row_str += pixel_color
+      else:
+        row_str += BG_PIXEL
+    rows.append(row_str)
+
+  return '\n'.join(rows), current_top_item
 
 
-def render_circle_wheel(slots, offset=0, pointer_emoji='🔻'):
-  """طراحی گرافیکی دایره ۱۰ خانه‌ای که با تغییر offset می‌چرخد"""
-  # چرخاندن آرایه بر اساس offset
-  s = [NUM_EMOJIS[(i + offset) % 10] for i in range(10)]
+def render_wheel_message(wheel, status_title='🎡 **گردونه شانس آماده است!**', winner=None):
+  items = wheel['items']
+  rot = wheel.get('rotation', 0)
+  pointer = '🎯' if winner else '🔻'
 
-  # خانه شماره 0 همیشه زیر عقربه (بالای دایره) قرار دارد
-  circle_art = (
-      f'```text\n'
-      f'          {pointer_emoji}\n'
-      f'        [ {s[0]} ]\n'
-      f'    {s[9]}          {s[1]}\n'
-      f' {s[8]}                {s[2]}\n'
-      f' {s[7]}       🎡       {s[3]}\n'
-      f'    {s[6]}          {s[4]}\n'
-      f'        {s[5]}\n'
-      f'```'
-  )
-  return circle_art, (0 + offset) % 10
+  pie_art, top_item = render_pie_wheel(items, rotation_deg=rot, pointer=pointer)
 
+  active_items = [i for i in items if i['weight'] > 0]
+  total_weight = sum(i['weight'] for i in active_items) or 1
 
-def build_legend(slots, active_idx=None, eliminated=None, scores=None):
-  """ساخت راهنمای شماره‌های گردونه در پایین دایره"""
-  if eliminated is None:
-    eliminated = []
-  if scores is None:
-    scores = {}
-
-  lines = []
-  for i in range(10):
-    opt = slots[i]
-    num = NUM_EMOJIS[i]
-    score_str = f' (⭐️{scores.get(opt, 0)})' if opt in scores else ''
-
-    if opt in eliminated:
-      lines.append(f'{num} : ~{opt}~ ❌')
-    elif i == active_idx:
-      lines.append(f'👉 {num} : **{opt}**{score_str} 👈')
+  legend_lines = []
+  for item in items:
+    w = item['weight']
+    if w == 0:
+      legend_lines.append(f"❌ ~{item['name']}~ *(حذف شده)*")
     else:
-      lines.append(f'{num} : {opt}{score_str}')
+      pct = int(round((w / total_weight) * 100))
+      mult = f'🔥`{w}x`' if w > 1 else '`1x`'
+      if winner and winner['name'] == item['name']:
+        legend_lines.append(
+            f"👉 {item['color']} **{item['name']}** ({mult} | شانس: {pct}%) 👑"
+        )
+      elif not winner and top_item['name'] == item['name']:
+        legend_lines.append(
+            f"🔸 {item['color']} **{item['name']}** ({mult} | {pct}%) 👈"
+        )
+      else:
+        legend_lines.append(
+            f"▫️ {item['color']} {item['name']} ({mult} | {pct}%)"
+        )
 
-  # نمایش دو ستونی برای جمع‌وجور شدن پیام
-  col1 = lines[:5]
-  col2 = lines[5:]
-  combined = [f'{col1[i]}   |   {col2[i]}' for i in range(5)]
-  return '\n'.join(combined)
+  legend_text = '\n'.join(legend_lines)
+
+  msg = (
+      f'{status_title}\n\n'
+      f'{pie_art}\n\n'
+      f'🎨 **راهنمای رنگ‌ها و ضریب شانس:**\n'
+      f'{legend_text}'
+  )
+  if winner:
+    msg += f"\n\n🎉 **برنده نهایی:** {winner['color']} **`{winner['name']}`** ✨"
+
+  return msg
 
 
-def get_wheel_keyboard(wheel_id):
+def get_main_keyboard(w_id):
   markup = InlineKeyboardMarkup(row_width=2)
   markup.add(
+      InlineKeyboardButton('🎲 بچرخون!', callback_data=f'spin:{w_id}'),
       InlineKeyboardButton(
-          '🎡 چرخش کلاسیک!', callback_data=f'spin_norm:{wheel_id}'
+          '💀 چرخش حذفی', callback_data=f'elim:{w_id}'
       ),
+  )
+  markup.add(
       InlineKeyboardButton(
-          '⚔️ دوئل (۳ امتیازی)', callback_data=f'spin_duel:{wheel_id}'
-      ),
-      InlineKeyboardButton(
-          '💀 دور حذفی (حذف ۱ گزینه)', callback_data=f'spin_elim:{wheel_id}'
-      ),
-      InlineKeyboardButton(
-          '🔀 بُر زدن خانه‌ها', callback_data=f'shuffle:{wheel_id}'
-      ),
+          '⚙️ کاستوم و تغییر شانس (1x/2x/3x)',
+          callback_data=f'menu_cust:{w_id}',
+      )
   )
   return markup
 
 
-def create_wheel_entry(options):
-  wheel_id = str(uuid.uuid4())[:8]
-  slots = fill_10_slots(options)
-  WHEELS[wheel_id] = {
-      'options': options,
-      'slots': slots,
-      'eliminated': [],
-      'scores': {opt: 0 for opt in options},
-  }
-  return wheel_id, slots
-
-
-# پاسخ به دستور /start در پی‌وی ربات
-@bot.message_handler(commands=['start', 'help'])
-def send_welcome(message):
-  guide = (
-      '🎡 **به ربات گردونه شانس پیشرفته خوش اومدی!**\n\n'
-      'این ربات طوری طراحی شده که مستقیم داخل **چت خصوصی دو نفره** کار کنه.\n\n'
-      '🔹 **روش اول (گزینه‌های دلخواه):**\n'
-      'توی هر چتی هستی تایپ کن:\n'
-      '`@Gardonebababot گزینه ۱، گزینه ۲، گزینه ۳`\n\n'
-      '🔹 **روش دوم (کتگوری‌های آماده):**\n'
-      'فقط آیدی `@Gardonebababot` رو تایپ کن و یک فاصله بزن تا گردونه‌های آماده (غذا، فیلم، بازی و...) برات باز بشه!\n\n'
-      '✨ **قابلیت‌های گردونه:**\n'
-      '• **چرخش دایره‌ای ۱۰ خانه‌ای:** تقسیم خودکار گزینه‌ها در دایره\n'
-      '• **حالت دوئل (⚔️):** چرخش پیاپی تا وقتی یک گزینه به ۲ امتیاز برسه\n'
-      '• **حالت حذفی (💀):** هر بار یک گزینه حذف میشه تا فقط یکی بمونه!'
-  )
-  bot.reply_to(message, guide, parse_mode='Markdown')
-
-
-# مدیریت حالت اینلاین در چت‌ها
-@bot.inline_handler(lambda query: True)
-def inline_handler(query):
-  text = query.query.strip()
-  results = []
-
-  # اگر کاربر چیزی تایپ نکرده بود، کتگوری‌های آماده رو نشون بده
-  if not text:
-    for preset in PRESET_CATEGORIES:
-      w_id, slots = create_wheel_entry(preset['options'])
-      circle, _ = render_circle_wheel(slots, 0)
-      legend = build_legend(slots)
-      msg_text = (
-          f"🎡 **{preset['title']}**\n"
-          f'{circle}\n'
-          f'📋 **راهنمای خانه‌های گردونه:**\n{legend}\n\n'
-          f'👇 حالت چرخش رو انتخاب کنید:'
-      )
-      results.append(
-          InlineQueryResultArticle(
-              id=w_id,
-              title=preset['title'],
-              description=preset['desc'],
-              input_message_content=InputTextMessageContent(
-                  msg_text, parse_mode='Markdown'
-              ),
-              reply_markup=get_wheel_keyboard(w_id),
-          )
-      )
-    bot.answer_inline_query(query.id, results, cache_time=1)
-    return
-
-  # جدا کردن گزینه‌های تایپ‌شده توسط کاربر
-  normalized = text.replace('،', ',').replace('-', ',')
-  options = []
-  for opt in normalized.split(','):
-    clean_opt = opt.strip()
-    if clean_opt and clean_opt not in options:
-      options.append(clean_opt)
-
-  if len(options) < 2:
-    help_article = InlineQueryResultArticle(
-        id='err_min',
-        title='⚠️ حداقل ۲ گزینه متفاوت بنویسید!',
-        description='گزینه‌ها را با ویرگول جدا کنید (یا خالی بگذارید تا منوی آماده باز شود)',
-        input_message_content=InputTextMessageContent(
-            '❌ لطفاً حداقل ۲ گزینه با ویرگول وارد کنید.\nمثال: `@Gardonebababot پیتزا، برگر`',
-            parse_mode='Markdown',
-        ),
+def get_custom_keyboard(w_id, wheel):
+  markup = InlineKeyboardMarkup(row_width=2)
+  buttons = []
+  for idx, item in enumerate(wheel['items']):
+    w = item['weight']
+    status = f'{w}x' if w > 0 else '❌'
+    btn_text = f"{item['color']} {item['name']} [{status}]"
+    buttons.append(
+        InlineKeyboardButton(btn_text, callback_data=f'wgt:{w_id}:{idx}')
     )
-    bot.answer_inline_query(query.id, [help_article], cache_time=1)
-    return
 
-  # محدود کردن به حداکثر ۱۰ گزینه برای جا شدن در دایره
-  options = options[:10]
-  w_id, slots = create_wheel_entry(options)
-  circle, _ = render_circle_wheel(slots, 0)
-  legend = build_legend(slots)
+  markup.add(*buttons)
 
-  msg_text = (
-      f'🎡 **گردونه شانس ۱۰ خانه‌ای آماده است!**\n'
-      f'{circle}\n'
-      f'📋 **راهنمای خانه‌ها (توزیع در ۱۰ اسلات):**\n{legend}\n\n'
-      f'👇 یکی از حالت‌های زیر رو برای چرخش انتخاب کن:'
+  # دکمه‌های کمکی کاستومایز
+  markup.row(
+      InlineKeyboardButton(
+          '➕ افزودن گزینه جدید', callback_data=f'add_opt:{w_id}'
+      ),
+      InlineKeyboardButton(
+          '🔄 ریست همه به 1x', callback_data=f'rst:{w_id}'
+      ),
   )
-
-  results.append(
-      InlineQueryResultArticle(
-          id=w_id,
-          title=f'✅ ارسال گردونه دایره‌ای ({len(options)} گزینه در ۱۰ خانه)',
-          description=' | '.join(options),
-          input_message_content=InputTextMessageContent(
-              msg_text, parse_mode='Markdown'
-          ),
-          reply_markup=get_wheel_keyboard(w_id),
+  markup.row(
+      InlineKeyboardButton(
+          '✅ ذخیره و بازگشت به گردونه', callback_data=f'back:{w_id}'
       )
   )
+  return markup
 
-  bot.answer_inline_query(query.id, results, cache_time=1)
+
+def create_wheel(option_names):
+  w_id = str(uuid.uuid4())[:8]
+  items = []
+  for i, name in enumerate(option_names[:8]):
+    items.append({
+        'name': name,
+        'color': COLORS[i % len(COLORS)],
+        'weight': 1,  # شانس پیش‌فرض: ۱ برابر
+    })
+  WHEELS[w_id] = {'items': items, 'rotation': 0}
+  return w_id, WHEELS[w_id]
 
 
-def edit_inline_or_chat(call, text, markup=None):
+@bot.inline_handler(lambda query: True)
+def inline_query_handler(query):
+  text = query.query.strip()
+
+  # اگر کاربر چیزی ننوشت، پنل گردونه آماده کاستوم با ۲ گزینه پیش‌فرض بساز
+  if not text:
+    default_opts = ['گزینه ۱', 'گزینه ۲']
+    w_id, wheel = create_wheel(default_opts)
+    msg_text = render_wheel_message(
+        wheel,
+        '🎡 **پنل گردونه ساخته شد!**\n*(برای نوشتن گزینه‌های خودت، بعد از آیدی بات با کاما بنویس یا از دکمه کاستوم استفاده کن)*',
+    )
+    item = InlineQueryResultArticle(
+        id=w_id,
+        title='🎡 ارسال گردونه به چت (قابل کاستومایز)',
+        description='یا همین الان بفرست تو چت، یا گزینه‌هاتو با ویرگول تایپ کن: گزینه۱، گزینه۲',
+        input_message_content=InputTextMessageContent(
+            msg_text, parse_mode='Markdown'
+        ),
+        reply_markup=get_main_keyboard(w_id),
+    )
+    bot.answer_inline_query(query.id, [item], cache_time=1)
+    return
+
+  # جدا کردن گزینه‌های کاربر (پشتیبانی از ضریب مستقیم مثل: پیتزا*2، برگر)
+  normalized = text.replace('،', ',').replace('-', ',')
+  raw_parts = [p.strip() for p in normalized.split(',') if p.strip()]
+
+  if len(raw_parts) < 2:
+    raw_parts.append('گزینه ۲')
+
+  w_id = str(uuid.uuid4())[:8]
+  items = []
+  for i, part in enumerate(raw_parts[:8]):
+    weight = 1
+    name = part
+    # اگر کاربر نوشت مثلا: پیتزا*3 یا پیتزا 2x
+    if '*' in part:
+      sp = part.split('*')
+      name = sp[0].strip()
+      if sp[1].strip().isdigit():
+        weight = max(1, min(5, int(sp[1].strip())))
+
+    items.append({
+        'name': name,
+        'color': COLORS[i % len(COLORS)],
+        'weight': weight,
+    })
+
+  WHEELS[w_id] = {'items': items, 'rotation': 0}
+  wheel = WHEELS[w_id]
+
+  msg_text = render_wheel_message(wheel)
+  result = InlineQueryResultArticle(
+      id=w_id,
+      title=f'🎨 ساخت گردونه دایره‌ای ({len(items)} گزینه)',
+      description=' | '.join([f"{it['color']} {it['name']}" for it in items]),
+      input_message_content=InputTextMessageContent(
+          msg_text, parse_mode='Markdown'
+      ),
+      reply_markup=get_main_keyboard(w_id),
+  )
+  bot.answer_inline_query(query.id, [result], cache_time=1)
+
+
+def edit_msg(call, text, markup=None):
   try:
     if call.inline_message_id:
       bot.edit_message_text(
@@ -269,165 +279,146 @@ def edit_inline_or_chat(call, text, markup=None):
     pass
 
 
-# مدیریت کلیک روی دکمه‌های گردونه
-@bot.callback_query_handler(
-    func=lambda call: ':' in call.data
-    and call.data.split(':')[0]
-    in ['spin_norm', 'spin_duel', 'spin_elim', 'shuffle']
-)
-def handle_callbacks(call):
-  action, w_id = call.data.split(':')
-  wheel = WHEELS.get(w_id)
+@bot.callback_query_handler(func=lambda call: True)
+def callback_router(call):
+  data = call.data.split(':')
+  action = data[0]
+  w_id = data[1] if len(data) > 1 else None
 
+  wheel = WHEELS.get(w_id)
   if not wheel:
     bot.answer_callback_query(
         call.id,
-        '⚠️ حافظه این گردونه پاک شده! لطفاً یک گردونه جدید بفرستید.',
+        '⚠️ این گردونه منقضی شده! دوباره با @ آیدی بات بفرستید.',
         show_alert=True,
     )
     return
 
-  user_name = call.from_user.first_name
-  slots = wheel['slots']
+  user = call.from_user.first_name
 
-  # ۱. حالت بُر زدن خانه‌های دایره (Shuffle)
-  if action == 'shuffle':
-    random.shuffle(wheel['slots'])
-    wheel['eliminated'] = []
-    wheel['scores'] = {opt: 0 for opt in wheel['options']}
-    circle, _ = render_circle_wheel(wheel['slots'], 0)
-    legend = build_legend(wheel['slots'])
-    new_text = (
-        f'🔀 **خانه‌های گردونه توسط {user_name} بُر زده شد!**\n'
-        f'{circle}\n'
-        f'📋 **چیدمان جدید خانه‌ها:**\n{legend}\n\n'
-        f'👇 آماده چرخش:'
+  # ۱. باز کردن منوی شیشه‌ای کاستومایز
+  if action == 'menu_cust':
+    text = render_wheel_message(
+        wheel,
+        '⚙️ **منوی کاستومایز گردونه**\n💡 *روی هر گزینه بزن تا شانسش توی دایره ۲ برابر (2x)، ۳ برابر (3x) یا ۴ برابر بشه!*',
     )
-    edit_inline_or_chat(call, new_text, get_wheel_keyboard(w_id))
-    bot.answer_callback_query(call.id, '🔀 چیدمان دایره عوض شد!')
+    edit_msg(call, text, get_custom_keyboard(w_id, wheel))
+    bot.answer_callback_query(call.id, '⚙️ وارد بخش کاستوم شدی!')
     return
 
-  # ۲. حالت چرخش کلاسیک دایره‌ای
-  if action == 'spin_norm':
-    bot.answer_callback_query(call.id, '🎡 گردونه در حال چرخش است...')
-    start_offset = random.randint(0, 9)
-    total_steps = 5  # ۵ فریم چرخش برای جلوگیری از محدودیت تلگرام
+  # ۲. تغییر ضریب شانس هر گزینه (1x -> 2x -> 3x -> 4x -> خاموش -> 1x)
+  if action == 'wgt':
+    idx = int(data[2])
+    item = wheel['items'][idx]
+    cycle = {1: 2, 2: 3, 3: 4, 4: 0, 0: 1}
+    new_w = cycle.get(item['weight'], 1)
 
-    for step in range(total_steps):
-      current_offset = (start_offset + step * 2 + 1) % 10
-      circle, top_idx = render_circle_wheel(
-          slots, current_offset, pointer_emoji='🔻'
-      )
-      legend = build_legend(slots, active_idx=top_idx)
-      anim_text = (
-          f'🌀 **در حال چرخش توسط {user_name}... (گام {step+1} از {total_steps})**\n'
-          f'{circle}\n'
-          f'📋 **خانه‌ها:**\n{legend}'
-      )
-      edit_inline_or_chat(call, anim_text)
-      time.sleep(0.6)
+    # جلوگیری از خاموش شدن همه گزینه‌ها
+    active_count = sum(1 for it in wheel['items'] if it['weight'] > 0)
+    if new_w == 0 and active_count <= 1:
+      new_w = 1
 
-    # توقف نهایی
-    final_offset = random.randint(0, 9)
-    circle, win_idx = render_circle_wheel(
-        slots, final_offset, pointer_emoji='🎯'
+    item['weight'] = new_w
+    text = render_wheel_message(
+        wheel,
+        f"⚙️ **شانس «{item['name']}» تغییر کرد!**\n*(ببین قاچ {item['color']} توی دایره چطور تغییر سایز داد!)*",
     )
-    winner = slots[win_idx]
-    legend = build_legend(slots, active_idx=win_idx)
-
-    final_text = (
-        f'🎉 **گردونه ایستاد! (چرخاننده: {user_name})**\n'
-        f'{circle}\n'
-        f'📋 **وضعیت خانه‌ها:**\n{legend}\n\n'
-        f'👑 **برنده نهایی:** خانه {NUM_EMOJIS[win_idx]} یعنی **`{winner}`** ✨'
+    edit_msg(call, text, get_custom_keyboard(w_id, wheel))
+    bot.answer_callback_query(
+        call.id,
+        f"شانس {item['name']}: {new_w} برابر شد"
+        if new_w > 0
+        else f"{item['name']} غیرفعال شد",
     )
-    edit_inline_or_chat(call, final_text, get_wheel_keyboard(w_id))
     return
 
-  # ۳. حالت حذفی (Battle Royale)
-  if action == 'spin_elim':
-    alive_options = [
-        opt for opt in wheel['options'] if opt not in wheel['eliminated']
-    ]
-    if len(alive_options) <= 1:
-      wheel['eliminated'] = []  # ریست کردن اگر قبلاً تموم شده
-      alive_options = wheel['options'][:]
-
-    bot.answer_callback_query(call.id, '💀 چرخش برای حذف یک گزینه...')
-
-    # انتخاب یک خانه از بین گزینه‌های زنده
-    alive_indices = [
-        i for i, opt in enumerate(slots) if opt not in wheel['eliminated']
-    ]
-    elim_idx = random.choice(alive_indices)
-    eliminated_opt = slots[elim_idx]
-    wheel['eliminated'].append(eliminated_opt)
-
-    remaining = [
-        opt for opt in wheel['options'] if opt not in wheel['eliminated']
-    ]
-    circle, _ = render_circle_wheel(slots, elim_idx, pointer_emoji='💀')
-    legend = build_legend(
-        slots, active_idx=elim_idx, eliminated=wheel['eliminated']
-    )
-
-    if len(remaining) == 1:
-      survivor = remaining[0]
-      text = (
-          f'🏆 **پایان نبرد حذفی! (توسط {user_name})**\n'
-          f'{circle}\n'
-          f'❌ گزینه `{eliminated_opt}` هم حذف شد!\n\n'
-          f'📋 **وضعیت نهایی:**\n{legend}\n\n'
-          f'👑 **تنها بازمانده و برنده مطلق:** **`{survivor}`** 🔥'
+  # ۳. افزودن گزینه جدید از داخل چت
+  if action == 'add_opt':
+    if len(wheel['items']) >= 8:
+      bot.answer_callback_query(
+          call.id, '⚠️ حداکثر ۸ رنگ در دایره جا می‌شود!', show_alert=True
       )
+      return
+    new_idx = len(wheel['items']) + 1
+    wheel['items'].append({
+        'name': f'گزینه {new_idx}',
+        'color': COLORS[(new_idx - 1) % len(COLORS)],
+        'weight': 1,
+    })
+    text = render_wheel_message(
+        wheel, f'➕ **گزینه {new_idx} به دایره اضافه شد!**'
+    )
+    edit_msg(call, text, get_custom_keyboard(w_id, wheel))
+    bot.answer_callback_query(call.id, 'گزینه جدید اضافه شد!')
+    return
+
+  # ۴. ریست کردن تمام ضرایب به حالت مساوی (1x)
+  if action == 'rst':
+    for it in wheel['items']:
+      it['weight'] = 1
+    text = render_wheel_message(
+        wheel, '🔄 **تمام قاچ‌های دایره دوباره مساوی (1x) شدند!**'
+    )
+    edit_msg(call, text, get_custom_keyboard(w_id, wheel))
+    bot.answer_callback_query(call.id, 'همه شانس‌ها مساوی شد!')
+    return
+
+  # ۵. بازگشت از منوی کاستوم به صفحه اصلی گردونه
+  if action == 'back':
+    text = render_wheel_message(
+        wheel, '✅ **تغییرات ذخیره شد! آماده چرخش:**'
+    )
+    edit_msg(call, text, get_main_keyboard(w_id))
+    bot.answer_callback_query(call.id, 'ذخیره شد!')
+    return
+
+  # ۶. چرخش اصلی دایره رنگی (یا چرخش حذفی)
+  if action in ['spin', 'elim']:
+    active_items = [it for it in wheel['items'] if it['weight'] > 0]
+    if not active_items:
+      for it in wheel['items']:
+        it['weight'] = 1
+      active_items = wheel['items']
+
+    bot.answer_callback_query(call.id, '🎡 گردونه داره می‌چرخه...')
+
+    # ۵ فریم چرخش زاویه‌ای رنگ‌های دایره
+    current_rot = wheel.get('rotation', 0)
+    for step in range(4):
+      current_rot = (current_rot + random.randint(55, 110)) % 360
+      wheel['rotation'] = current_rot
+      anim_msg = render_wheel_message(
+          wheel, f'🌀 **در حال چرخش توسط {user}...**'
+      )
+      edit_msg(call, anim_msg)
+      time.sleep(0.55)
+
+    # انتخاب برنده نهایی دقیقاً بر اساس زاویه و وزن شانس
+    final_rot = (current_rot + random.randint(40, 160)) % 360
+    wheel['rotation'] = final_rot
+    _, winner = render_pie_wheel(wheel['items'], rotation_deg=final_rot)
+
+    if action == 'elim':
+      winner['weight'] = 0  # حذف از دور بعدی
+      alive_left = [it for it in wheel['items'] if it['weight'] > 0]
+      if len(alive_left) == 1:
+        champ = alive_left[0]
+        final_msg = render_wheel_message(
+            wheel,
+            f'🏆 **پایان دور حذفی! ({winner["name"]} حذف شد)**',
+            winner=champ,
+        )
+      else:
+        final_msg = render_wheel_message(
+            wheel,
+            f'💀 **گزینه {winner["color"]} «{winner["name"]}» حذف شد و از دایره بیرون رفت!**',
+        )
     else:
-      text = (
-          f'💀 **دور حذفی (توسط {user_name})**\n'
-          f'{circle}\n'
-          f'❌ گزینه **`{eliminated_opt}`** از گردونه خارج شد!\n'
-          f'🟢 گزینه‌های باقی‌مانده: `{len(remaining)}` گزینه\n\n'
-          f'📋 **وضعیت خانه‌ها:**\n{legend}\n\n'
-          f'👇 دوباره روی «دور حذفی» بزنید تا بعدی حذف بشه:'
+      final_msg = render_wheel_message(
+          wheel, f'🎯 **گردونه ایستاد! (توسط {user})**', winner=winner
       )
-    edit_inline_or_chat(call, text, get_wheel_keyboard(w_id))
-    return
 
-  # ۴. حالت دوئل امتیازی (اولین گزینه‌ای که به ۲ امتیاز برسد)
-  if action == 'spin_duel':
-    bot.answer_callback_query(call.id, '⚔️ ماراتن دوئل شروع شد!')
-    wheel['scores'] = {opt: 0 for opt in wheel['options']}
-    champion = None
-    round_num = 1
-
-    while not champion and round_num <= 6:
-      pick_idx = random.randint(0, 9)
-      picked_opt = slots[pick_idx]
-      wheel['scores'][picked_opt] += 1
-
-      if wheel['scores'][picked_opt] >= 2:
-        champion = picked_opt
-
-      circle, _ = render_circle_wheel(slots, pick_idx, pointer_emoji='⚔️')
-      legend = build_legend(slots, active_idx=pick_idx, scores=wheel['scores'])
-
-      round_text = (
-          f'⚔️ **دوئل گردونه - راند {round_num} (توسط {user_name})**\n'
-          f'{circle}\n'
-          f'🎯 این راند افتاد روی: **`{picked_opt}`** (+۱ امتیاز)\n\n'
-          f'📋 **جدول امتیازات:**\n{legend}'
-      )
-      edit_inline_or_chat(call, round_text)
-      round_num += 1
-      if not champion:
-        time.sleep(0.75)
-
-    final_duel_text = (
-        f'🏆 **پایان دوئل نفس‌گیر! (چرخاننده: {user_name})**\n'
-        f'{circle}\n'
-        f'📋 **امتیازات نهایی:**\n{legend}\n\n'
-        f'👑 **قهرمان دوئل (با کسب ۲ ستاره):** **`{champion}`** 🎉'
-    )
-    edit_inline_or_chat(call, final_duel_text, get_wheel_keyboard(w_id))
+    edit_msg(call, final_msg, get_main_keyboard(w_id))
 
 
 def run_bot():
